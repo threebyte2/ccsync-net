@@ -4,6 +4,7 @@
     --text-color: #cdd6f4;
     --accent-color: #89b4fa;
     --success-color: #a6e3a1;
+    --warning-color: #f9e2af;
     --error-color: #f38ba8;
     --border-color: #45475a;
     --hover-color: #313244;
@@ -299,4 +300,31 @@ input:focus {
     align-items: center;
     gap: 8px;
     cursor: pointer;
+}
+
+/* 紧凑卡片样式 */
+.card.compact-card {
+    padding: 10px 15px;
+    margin-bottom: 15px;
+}
+
+.compact-card h3 {
+    margin-bottom: 8px;
+    font-size: 0.9rem;
+}
+
+.form-group.compact-form input {
+    padding: 6px 10px;
+    font-size: 0.9rem;
+}
+
+/* 同步模式复选框布局 */
+.sync-checkboxes {
+    display: flex;
+    gap: 15px;
+}
+
+.sync-checkboxes .checkbox-wrapper label {
+    font-size: 0.85rem;
+    color: var(--text-color);
 }

@@ -19,6 +19,9 @@ type Config struct {
 
 	// 是否自动启动
 	AutoStart bool `json:"autoStart"`
+
+	// 同步模式: "bidirectional", "send_only", "receive_only"
+	SyncMode string `json:"syncMode"`
 }
 
 // DefaultConfig 默认配置
@@ -28,6 +31,7 @@ func DefaultConfig() *Config {
 		ServerPort:    8765,
 		ServerAddress: "127.0.0.1:8765",
 		AutoStart:     false,
+		SyncMode:      "bidirectional",
 	}
 }
 

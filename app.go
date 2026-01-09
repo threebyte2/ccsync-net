@@ -35,8 +35,9 @@ func NewApp() *App {
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	a.loadConfig()
+	a.loadConfig()
+	a.initCallbacks() // Init callbacks first so logging works during clipboard start
 	a.initClipboard()
-	a.initCallbacks()
 
 	if a.cfg.AutoStart {
 		if a.cfg.Mode == "server" {
@@ -66,6 +67,12 @@ func (a *App) initCallbacks() {
 		a.lastCopied = content
 		wailsRun.EventsEmit(a.ctx, "clipboard:local", content)
 
+		// 如果模式为 receive_only，则不发送
+		if a.cfg.SyncMode == "receive_only" {
+			wailsRun.EventsEmit(a.ctx, "log", "同步模式为只入，跳过发送")
+			return
+		}
+
 		if a.cfg.Mode == "server" && a.server.IsRunning() {
 			a.server.BroadcastClipboard(content, "server")
 		} else if a.cfg.Mode == "client" && a.client.IsConnected() {
@@ -75,6 +82,13 @@ func (a *App) initCallbacks() {
 
 	// 服务端收到消息 -> 更新本地剪贴板
 	a.server.OnClipboardReceived = func(content string) {
+		// 如果模式为 send_only，则不写入本地剪贴板
+		if a.cfg.SyncMode == "send_only" {
+			// 仍然可以通知界面收到了消息，但不写入
+			wailsRun.EventsEmit(a.ctx, "log", "同步模式为只出，跳过写入本地剪贴板")
+			return
+		}
+
 		if content != a.lastCopied {
 			a.clipboard.SetContent(content)
 			a.lastCopied = content
@@ -92,6 +106,12 @@ func (a *App) initCallbacks() {
 
 	// 客户端收到消息 -> 更新本地剪贴板
 	a.client.OnClipboardReceived = func(content string) {
+		// 如果模式为 send_only，则不写入本地剪贴板
+		if a.cfg.SyncMode == "send_only" {
+			wailsRun.EventsEmit(a.ctx, "log", "同步模式为只出，跳过写入本地剪贴板")
+			return
+		}
+
 		if content != a.lastCopied {
 			a.clipboard.SetContent(content)
 			a.lastCopied = content
@@ -139,6 +159,7 @@ func (a *App) SaveConfig(cfg config.Config) error {
 	a.cfg.ServerPort = cfg.ServerPort
 	a.cfg.ServerAddress = cfg.ServerAddress
 	a.cfg.AutoStart = cfg.AutoStart
+	a.cfg.SyncMode = cfg.SyncMode // 保存 SyncMode
 	return a.cfg.Save()
 }
 

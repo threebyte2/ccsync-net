@@ -15,7 +15,14 @@ var assets embed.FS
 func main() {
 	// Initialize clipboard (must be on main thread)
 	if err := clipboard.Init(); err != nil {
-		println("Clipboard Init Error:", err.Error())
+		println("========================================")
+		println("剪贴板初始化失败:", err.Error())
+		println("")
+		println("在 Linux 系统上，请确保已安装剪贴板工具：")
+		println("  Debian/Ubuntu: sudo apt-get install xclip")
+		println("  Fedora/RHEL:   sudo dnf install xclip")
+		println("  Arch Linux:    sudo pacman -S xclip")
+		println("========================================")
 		return
 	}
 

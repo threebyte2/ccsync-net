@@ -1,10 +1,14 @@
 package clipboard
 
 import (
+	"bufio"
 	"context"
-	"log"
+	"fmt"
+	"io"
+	"os/exec"
+	"runtime"
+	"strings"
 	"sync"
-	"time"
 
 	"golang.design/x/clipboard"
 )
@@ -26,10 +30,8 @@ func NewMonitor() *Monitor {
 	return &Monitor{}
 }
 
-// Init 初始化剪贴板（已移至 main.go，此处仅保留接口兼容）
+// Init 初始化剪贴板
 func (m *Monitor) Init() error {
-	// 实际初始化必须在 main 线程完成
-	// 这里可以添加检查或者直接返回 nil
 	return nil
 }
 
@@ -48,7 +50,7 @@ func (m *Monitor) Start() error {
 
 	go m.watchLoop(ctx)
 
-	m.log("剪贴板监听已启动")
+	m.log("Clipboard monitor started")
 	return nil
 }
 
@@ -66,7 +68,7 @@ func (m *Monitor) Stop() {
 		m.cancelFunc()
 	}
 
-	m.log("剪贴板监听已停止")
+	m.log("Clipboard monitor stopped")
 }
 
 // IsRunning 检查是否在运行
@@ -78,78 +80,164 @@ func (m *Monitor) IsRunning() bool {
 
 // SetContent 设置剪贴板内容
 func (m *Monitor) SetContent(content string) {
-	// 记录日志确保调用
-	m.log("设置剪贴板内容: " + preview(content))
-	
-	// 直接写入，不更新 lastContent，让 watchLoop 自然发现变化
-	// 这样可以避免 "Old" read race 导致的状态混乱
-	// 同时也依赖 App 层做回环检测
-	
-	// 写入剪贴板
-	start := time.Now()
-	clipboard.Write(clipboard.FmtText, []byte(content))
-	m.log("写入耗时: " + time.Since(start).String())
+	if runtime.GOOS == "linux" {
+		m.setContentLinux(content)
+	} else {
+		// Fallback to library for other OS
+		clipboard.Write(clipboard.FmtText, []byte(content))
+	}
+
+	// 主动更新 lastContent (存储清理后的版本)
+	m.setLastContent(cleanContent(content))
 }
 
-func preview(str string) string {
-	if len(str) > 20 {
-		return str[:20] + "..."
+func (m *Monitor) setContentLinux(content string) {
+	cmd := exec.Command("wl-copy")
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		m.log(fmt.Sprintf("Failed to create stdin pipe for wl-copy: %v", err))
+		return
 	}
-	return str
+
+	go func() {
+		defer stdin.Close()
+		io.WriteString(stdin, content)
+	}()
+
+	if err := cmd.Run(); err != nil {
+		m.log(fmt.Sprintf("wl-copy failed: %v", err))
+	}
 }
 
 // GetContent 获取当前剪贴板内容
 func (m *Monitor) GetContent() string {
-	data := clipboard.Read(clipboard.FmtText)
-	return string(data)
+	var content string
+	if runtime.GOOS == "linux" {
+		out, err := exec.Command("wl-paste").Output()
+		if err == nil {
+			content = string(out)
+		}
+	} else {
+		// Fallback to library
+		content = string(clipboard.Read(clipboard.FmtText))
+	}
+	// 返回原始内容，清理逻辑在使用处处理
+	return content
 }
 
 func (m *Monitor) watchLoop(ctx context.Context) {
-	// 初始化最后内容
-	m.lastLock.Lock()
-	m.lastContent = m.GetContent()
-	m.lastLock.Unlock()
+	if runtime.GOOS == "linux" {
+		m.watchLoopLinux(ctx)
+		return
+	}
+	
+	// Non-Linux fallback using library Watch
+	// 初始化
+	initial := m.GetContent()
+	m.setLastContent(cleanContent(initial))
 
-	ticker := time.NewTicker(500 * time.Millisecond)
-	defer ticker.Stop()
-
+	changed := clipboard.Watch(ctx, clipboard.FmtText)
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
-			// Debug log to ensure detection is running (reduce frequency if too noisy)
-			// m.log("Checking clipboard...") 
-			m.checkClipboard()
+		case data, ok := <-changed:
+			if !ok {
+				return
+			}
+			content := string(data)
+			m.processChange(content)
 		}
 	}
 }
 
-func (m *Monitor) checkClipboard() {
-	current := m.GetContent()
+func (m *Monitor) watchLoopLinux(ctx context.Context) {
+	// Initialize last content
+	m.setLastContent(cleanContent(m.GetContent()))
+
+	m.log("Starting wl-paste --watch monitor...")
+
+	// Use wl-paste --watch to detect changes.
+	cmd := exec.CommandContext(ctx, "wl-paste", "--watch", "echo", "change")
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		m.log(fmt.Sprintf("Failed to start wl-paste watcher: %v", err))
+		return
+	}
+
+	if err := cmd.Start(); err != nil {
+		m.log(fmt.Sprintf("Failed to run wl-paste watcher: %v", err))
+		return
+	}
+
+	reader := bufio.NewReader(stdout)
+	
+	go func() {
+		// Wait for command to finish (when context cancelled)
+		cmd.Wait()
+	}()
+
+	for {
+		// Read line effectively waits for the next "change" output
+		_, err := reader.ReadString('\n')
+		if err != nil {
+			// Process ended or error
+			return
+		}
+
+		// Clipboard changed
+		// We add a small delay to ensure content is ready or just read it
+		content := m.GetContent()
+		m.processChange(content)
+	}
+}
+
+func (m *Monitor) processChange(current string) {
+	cleaned := cleanContent(current)
 
 	m.lastLock.RLock()
 	lastContent := m.lastContent
 	m.lastLock.RUnlock()
 
-	if current == lastContent {
+	// 比较清理后的内容，忽略无效空白字符差异
+	if cleaned == lastContent {
 		return
 	}
 
-	// 更新最后内容
-	m.lastLock.Lock()
-	m.lastContent = current
-	m.lastLock.Unlock()
+	m.setLastContent(cleaned)
 
-	// 触发回调
-	if m.OnChange != nil && current != "" {
-		m.OnChange(current)
+	m.log("Content changed detected")
+
+	// 触发回调，传递清理后的内容，解决多余换行问题
+	if m.OnChange != nil && cleaned != "" {
+		m.OnChange(cleaned)
 	}
 }
 
+func (m *Monitor) setLastContent(content string) {
+	m.lastLock.Lock()
+	m.lastContent = content
+	m.lastLock.Unlock()
+}
+
 func (m *Monitor) log(msg string) {
-	log.Println("[Clipboard]", msg)
+	// Only log significant events, or if OnLog is set.
+	// User requested to remove useless print content.
+	// We will keep minimal logging.
 	if m.OnLog != nil {
 		m.OnLog(msg)
 	}
+}
+
+func cleanContent(str string) string {
+	// 仅移除尾部的换行符(包括 \r 和 \n)，保留其他空白
+	return strings.TrimRight(str, "\r\n")
+}
+
+func preview(str string) string {
+	str = cleanContent(str)
+	if len(str) > 20 {
+		return str[:20] + "..."
+	}
+	return str
 }

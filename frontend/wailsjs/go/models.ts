@@ -5,6 +5,7 @@ export namespace config {
 	    serverPort: number;
 	    serverAddress: string;
 	    autoStart: boolean;
+	    syncMode: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Config(source);
@@ -16,6 +17,7 @@ export namespace config {
 	        this.serverPort = source["serverPort"];
 	        this.serverAddress = source["serverAddress"];
 	        this.autoStart = source["autoStart"];
+	        this.syncMode = source["syncMode"];
 	    }
 	}
 
