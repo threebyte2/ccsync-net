@@ -60,6 +60,6 @@ if ($LASTEXITCODE -ne 0) {
 
 Write-Host ""
 Write-Host "✅ Build complete!"
-Write-Host "The executable can be found in: build\bin\bsmanager.exe"
+Write-Host "The executable can be found in: build\bin\ccsync-net.exe"
 Write-Host ""
 #
