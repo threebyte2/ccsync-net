@@ -48,9 +48,10 @@ func (a *App) startup(ctx context.Context) {
 }
 
 func (a *App) initClipboard() {
-	if err := a.clipboard.Init(); err != nil {
-		wailsRun.LogError(a.ctx, "剪贴板初始化失败: "+err.Error())
-	}
+	// clipboard.Init() already called in main.go
+	// if err := a.clipboard.Init(); err != nil {
+	// 	wailsRun.LogError(a.ctx, "剪贴板初始化失败: "+err.Error())
+	// }
 	a.clipboard.Start()
 }
 

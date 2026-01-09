@@ -26,9 +26,11 @@ func NewMonitor() *Monitor {
 	return &Monitor{}
 }
 
-// Init 初始化剪贴板（必须在主线程调用）
+// Init 初始化剪贴板（已移至 main.go，此处仅保留接口兼容）
 func (m *Monitor) Init() error {
-	return clipboard.Init()
+	// 实际初始化必须在 main 线程完成
+	// 这里可以添加检查或者直接返回 nil
+	return nil
 }
 
 // Start 开始监听剪贴板变化
@@ -116,6 +118,8 @@ func (m *Monitor) watchLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			// Debug log to ensure detection is running (reduce frequency if too noisy)
+			// m.log("Checking clipboard...") 
 			m.checkClipboard()
 		}
 	}
