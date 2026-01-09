@@ -86,3 +86,5 @@ vendor/
 
 # Go module cache
 go.sum.bak
+
+.ai_memory

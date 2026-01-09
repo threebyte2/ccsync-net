@@ -18,7 +18,7 @@ func main() {
 	// Create application with options
 	err := wails.Run(&options.App{
 		Title:  "ccsync-net",
-		Width:  1024,
+		Width:  512,
 		Height: 768,
 		AssetServer: &assetserver.Options{
 			Assets: assets,
