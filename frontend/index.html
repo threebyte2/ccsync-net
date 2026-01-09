@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8"/>
+    <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+    <title>CCSync-Net</title>
+    <link rel="stylesheet" href="./src/style.css">
+    <!-- Font Awesome for icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="logo">
+                <i class="fa-solid fa-cloud-arrow-up"></i>
+                <h1>CCSync-Net</h1>
+            </div>
+            <div class="status-badge" id="appStatus">
+                <span class="dot"></span>
+                <span class="text">就绪</span>
+            </div>
+        </header>
+
+        <main>
+            <!-- 模式切换 -->
+            <div class="mode-switch">
+                <button class="mode-btn active" data-mode="server" onclick="switchMode('server')">
+                    <i class="fa-solid fa-server"></i> 服务端模式
+                </button>
+                <button class="mode-btn" data-mode="client" onclick="switchMode('client')">
+                    <i class="fa-solid fa-desktop"></i> 客户端模式
+                </button>
+            </div>
+
+            <!-- 服务端面板 -->
+            <div id="serverPanel" class="panel active">
+                <div class="card">
+                    <h3><i class="fa-solid fa-sliders"></i> 服务端配置</h3>
+                    <div class="form-group">
+                        <label>监听端口</label>
+                        <input type="number" id="serverPort" value="8765" placeholder="例如: 8765">
+                    </div>
+                </div>
+
+                <div class="card info-card">
+                    <div class="stat-item">
+                        <span class="label">客户端连接数</span>
+                        <span class="value" id="clientCount">0</span>
+                    </div>
+                </div>
+
+                <div class="actions">
+                    <button id="serverToggleBtn" class="btn primary" onclick="toggleServer()">
+                        <i class="fa-solid fa-play"></i> 启动服务
+                    </button>
+                </div>
+            </div>
+
+            <!-- 客户端面板 -->
+            <div id="clientPanel" class="panel">
+                <div class="card">
+                    <h3><i class="fa-solid fa-sliders"></i> 客户端配置</h3>
+                    <div class="form-group">
+                        <label>服务端地址 (IP:Port)</label>
+                        <input type="text" id="serverAddr" value="127.0.0.1:8765" placeholder="例如: 192.168.1.100:8765">
+                    </div>
+                </div>
+
+                <div class="card info-card">
+                    <div class="stat-item">
+                        <span class="label">连接状态</span>
+                        <span class="value" id="connStatus">未连接</span>
+                    </div>
+                </div>
+
+                <div class="actions">
+                    <button id="clientToggleBtn" class="btn primary" onclick="toggleClient()">
+                        <i class="fa-solid fa-link"></i> 连接服务端
+                    </button>
+                </div>
+            </div>
+
+            <!-- 通用设置 -->
+            <div class="card settings-card">
+                <div class="checkbox-wrapper">
+                    <input type="checkbox" id="autoStart" onchange="saveConfig()">
+                    <label for="autoStart">程序启动时自动运行</label>
+                </div>
+            </div>
+
+            <!-- 日志区域 -->
+            <div class="log-panel">
+                <div class="log-header">
+                    <span><i class="fa-solid fa-terminal"></i> 运行日志</span>
+                    <button class="btn-text" onclick="clearLogs()">清空</button>
+                </div>
+                <div id="logs" class="log-content"></div>
+            </div>
+        </main>
+    </div>
+
+    <script src="./src/main.js" type="module"></script>
+</body>
+</html>
