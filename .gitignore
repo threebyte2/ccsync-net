@@ -1,5 +1,5 @@
 # Wails build outputs
-build/
+build/bin
 app.syso
 *.exe
 *.app
