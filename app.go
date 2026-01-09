@@ -57,6 +57,11 @@ func (a *App) initClipboard() {
 func (a *App) initCallbacks() {
 	// 剪贴板变化 -> 发送给网络
 	a.clipboard.OnChange = func(content string) {
+		// 防止回环：如果内容与最后一次处理的内容相同，则忽略
+		if content == a.lastCopied {
+			return
+		}
+
 		a.lastCopied = content
 		wailsRun.EventsEmit(a.ctx, "clipboard:local", content)
 

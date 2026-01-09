@@ -13,7 +13,7 @@ export GOPATH=$(sudo -u "$REAL_USER" go env GOPATH 2>/dev/null || echo "$USER_HO
 export PATH="$USER_PATH:/usr/local/go/bin:$GOPATH/bin:$USER_HOME/.local/bin:$PATH"
 
 APP_NAME="ccsync-net"
-DISPLAY_NAME="CCSync 指纹浏览器管理器"
+DISPLAY_NAME="剪贴板同步"
 ICON_SOURCE="build/ccsync-net.png"
 INSTALL_DIR="$USER_HOME/.local/bin"
 ICON_DIR="$USER_HOME/.local/share/icons"

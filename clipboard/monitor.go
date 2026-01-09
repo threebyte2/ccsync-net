@@ -16,9 +16,6 @@ type Monitor struct {
 	cancelFunc  context.CancelFunc
 	lastContent string
 	lastLock    sync.RWMutex
-	ignoreNext  bool
-	ignoreLock  sync.Mutex
-
 	// 回调函数
 	OnChange func(content string)
 	OnLog    func(msg string)
@@ -77,17 +74,26 @@ func (m *Monitor) IsRunning() bool {
 	return m.running
 }
 
-// SetContent 设置剪贴板内容（会忽略下一次变化事件）
+// SetContent 设置剪贴板内容
 func (m *Monitor) SetContent(content string) {
-	m.ignoreLock.Lock()
-	m.ignoreNext = true
-	m.ignoreLock.Unlock()
-
-	m.lastLock.Lock()
-	m.lastContent = content
-	m.lastLock.Unlock()
-
+	// 记录日志确保调用
+	m.log("设置剪贴板内容: " + preview(content))
+	
+	// 直接写入，不更新 lastContent，让 watchLoop 自然发现变化
+	// 这样可以避免 "Old" read race 导致的状态混乱
+	// 同时也依赖 App 层做回环检测
+	
+	// 写入剪贴板
+	start := time.Now()
 	clipboard.Write(clipboard.FmtText, []byte(content))
+	m.log("写入耗时: " + time.Since(start).String())
+}
+
+func preview(str string) string {
+	if len(str) > 20 {
+		return str[:20] + "..."
+	}
+	return str
 }
 
 // GetContent 获取当前剪贴板内容
@@ -125,18 +131,6 @@ func (m *Monitor) checkClipboard() {
 	if current == lastContent {
 		return
 	}
-
-	// 检查是否需要忽略
-	m.ignoreLock.Lock()
-	if m.ignoreNext {
-		m.ignoreNext = false
-		m.ignoreLock.Unlock()
-		m.lastLock.Lock()
-		m.lastContent = current
-		m.lastLock.Unlock()
-		return
-	}
-	m.ignoreLock.Unlock()
 
 	// 更新最后内容
 	m.lastLock.Lock()
