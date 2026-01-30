@@ -4,5 +4,5 @@ package main
 
 import _ "embed"
 
-//go:embed build/appicon.png
+//go:embed build/ccsync-net.png
 var iconData []byte

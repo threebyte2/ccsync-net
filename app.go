@@ -10,7 +10,7 @@ import (
 
 	wailsRun "github.com/wailsapp/wails/v2/pkg/runtime"
 
-	"github.com/getlantern/systray"
+	"github.com/energye/systray"
 )
 
 // App struct
@@ -228,19 +228,15 @@ func (a *App) onTrayReady() {
 	mShow := systray.AddMenuItem("显示主窗口", "Show Main Window")
 	mQuit := systray.AddMenuItem("退出", "Quit Application")
 
-	go func() {
-		for {
-			select {
-			case <-mShow.ClickedCh:
-				wailsRun.WindowShow(a.ctx)
-			case <-mQuit.ClickedCh:
-				a.isQuitting = true
-				systray.Quit()
-				wailsRun.Quit(a.ctx)
-				return
-			}
-		}
-	}()
+	mShow.Click(func() {
+		wailsRun.WindowShow(a.ctx)
+	})
+
+	mQuit.Click(func() {
+		a.isQuitting = true
+		systray.Quit()
+		wailsRun.Quit(a.ctx)
+	})
 }
 
 func (a *App) onTrayExit() {
