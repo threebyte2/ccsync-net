@@ -3,12 +3,14 @@ package main
 import (
 	"context"
 	"fmt"
-	
+
 	"ccsync-net/clipboard"
 	"ccsync-net/config"
 	"ccsync-net/sync"
 
 	wailsRun "github.com/wailsapp/wails/v2/pkg/runtime"
+
+	"github.com/getlantern/systray"
 )
 
 // App struct
@@ -19,6 +21,7 @@ type App struct {
 	client     *sync.Client
 	clipboard  *clipboard.Monitor
 	lastCopied string
+	isQuitting bool
 }
 
 // NewApp creates a new App application struct
@@ -35,7 +38,10 @@ func NewApp() *App {
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	a.loadConfig()
-	a.loadConfig()
+
+	// Start systray
+	go systray.Run(a.onTrayReady, a.onTrayExit)
+
 	a.initCallbacks() // Init callbacks first so logging works during clipboard start
 	a.initClipboard()
 
@@ -203,4 +209,40 @@ func (a *App) shutdown(ctx context.Context) {
 	a.clipboard.Stop()
 	a.server.Stop()
 	a.client.Disconnect()
+}
+
+func (a *App) beforeClose(ctx context.Context) (prevent bool) {
+	if a.isQuitting {
+		return false
+	}
+	// Default behavior: minimize to tray (hide window)
+	wailsRun.WindowHide(a.ctx)
+	return true
+}
+
+func (a *App) onTrayReady() {
+	systray.SetIcon(iconData)
+	systray.SetTitle("CCSync Net")
+	systray.SetTooltip("CCSync Net")
+
+	mShow := systray.AddMenuItem("显示主窗口", "Show Main Window")
+	mQuit := systray.AddMenuItem("退出", "Quit Application")
+
+	go func() {
+		for {
+			select {
+			case <-mShow.ClickedCh:
+				wailsRun.WindowShow(a.ctx)
+			case <-mQuit.ClickedCh:
+				a.isQuitting = true
+				systray.Quit()
+				wailsRun.Quit(a.ctx)
+				return
+			}
+		}
+	}()
+}
+
+func (a *App) onTrayExit() {
+	// Cleanup here
 }
