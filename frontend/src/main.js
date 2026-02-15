@@ -223,56 +223,119 @@ function switchMode(mode) {
 
   // Save selection temporarily (will save fully on Connect/Start)
   currentConfig.mode = mode;
-  // The saveConfig() call was removed from here as per the instruction.
-  // The config will be saved when Start/Connect is clicked.
 }
 
-// The switchModeUI function is no longer needed as its logic is integrated into switchMode.
-// function switchModeUI(mode) {
-//   document.querySelectorAll(".mode-btn").forEach((btn) => {
-//     btn.classList.toggle("active", btn.dataset.mode === mode);
-//   });
-
-//   document
-//     .getElementById("serverPanel")
-//     .classList.toggle("active", mode === "server");
-//   document
-//     .getElementById("clientPanel")
-//     .classList.toggle("active", mode === "client");
-// }
+// Pure UI switch — no running check, used for initialization
+function switchModeUI(mode) {
+  document.querySelectorAll(".mode-btn").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.mode === mode);
+  });
+  document.getElementById("serverPanel").classList.toggle("active", mode === "server");
+  document.getElementById("clientPanel").classList.toggle("active", mode === "client");
+}
 
 async function toggleServer() {
-  // Manual Start/Stop does NOT affect autoStart config
-  // We check current UI state "Running" or "Stopped" through button class or variable
+  const btn = document.getElementById("serverToggleBtn");
   
   if (isServerRunning) {
-    await window.go.main.App.StopSync();
+    log("正在停止服务...");
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 停止中...';
+    serverPending = "stopping";
+    try {
+      await window.go.main.App.StopSync();
+    } catch (e) {
+      log("停止服务失败: " + e);
+      showToast("停止服务失败: " + e, "error");
+      serverPending = null;
+      btn.disabled = false;
+      updateServerBtn(isServerRunning);
+    }
   } else {
     const port = parseInt(document.getElementById("serverPort").value);
-    await window.go.main.App.StartServerMode(port);
+    if (!port) {
+      showToast("请填写端口号", "warning");
+      return;
+    }
+    log("正在启动服务 (端口: " + port + ") ...");
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 启动中...';
+    serverPending = "starting";
+    try {
+      await window.go.main.App.StartServerMode(port);
+    } catch (e) {
+      log("启动服务失败: " + e);
+      showToast("启动服务失败: " + e, "error");
+      serverPending = null;
+      btn.disabled = false;
+      updateServerBtn(isServerRunning);
+    }
+    // Button stays in loading state until polling detects running=true
   }
 }
 
 async function toggleClient() {
-  // Rely on button state (danger class = running/connected) to determine action
   const btn = document.getElementById("clientToggleBtn");
   const isRunning = btn.classList.contains("danger"); 
   
   if (isRunning) {
-    await window.go.main.App.StopSync();
-    // Assuming backend handles disconnection
+    log("正在断开连接...");
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 断开中...';
+    clientPending = "stopping";
+    try {
+      await window.go.main.App.StopSync();
+    } catch (e) {
+      log("断开连接失败: " + e);
+      showToast("断开连接失败: " + e, "error");
+      clientPending = null;
+      btn.disabled = false;
+      updateClientBtn(false);
+    }
   } else {
     const addr = document.getElementById("serverAddr").value;
-    await window.go.main.App.StartClientMode(addr);
+    if (!addr) {
+      showToast("请填写服务端地址", "warning");
+      return;
+    }
+    log("正在连接 " + addr + " ...");
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 连接中...';
+    clientPending = "starting";
+    try {
+      await window.go.main.App.StartClientMode(addr);
+    } catch (e) {
+      log("连接失败: " + e);
+      showToast("连接失败: " + e, "error");
+      clientPending = null;
+      btn.disabled = false;
+      updateClientBtn(false);
+    }
+    // Button stays in loading state until polling detects connected=true
   }
 }
 
 // Variables to track state for toggle functions
 let isServerRunning = false;
+let serverPending = null; // "starting" | "stopping" | null
+let clientPending = null; // "starting" | "stopping" | null
 
 function updateServerBtn(running) {
   isServerRunning = running;
   const btn = document.getElementById("serverToggleBtn");
+
+  // If pending, only clear when target state is reached
+  if (serverPending === "starting" && running) {
+    serverPending = null;
+    log("✅ 服务已启动");
+  } else if (serverPending === "stopping" && !running) {
+    serverPending = null;
+    log("✅ 服务已停止");
+  } else if (serverPending) {
+    return; // Still waiting, keep spinner
+  }
+
+  btn.disabled = false;
   if (running) {
     btn.innerHTML = '<i class="fa-solid fa-stop"></i> 停止服务';
     btn.classList.add("danger");
@@ -286,6 +349,19 @@ function updateServerBtn(running) {
 
 function updateClientBtn(running) {
   const btn = document.getElementById("clientToggleBtn");
+
+  // If pending, only clear when target state is reached
+  if (clientPending === "starting" && running) {
+    clientPending = null;
+    log("✅ 已连接服务端");
+  } else if (clientPending === "stopping" && !running) {
+    clientPending = null;
+    log("✅ 已断开连接");
+  } else if (clientPending) {
+    return; // Still waiting, keep spinner
+  }
+
+  btn.disabled = false;
   if (running) {
     btn.innerHTML = '<i class="fa-solid fa-link-slash"></i> 断开连接';
     btn.classList.add("danger");

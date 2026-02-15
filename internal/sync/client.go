@@ -11,12 +11,12 @@ import (
 
 // Client WebSocket 客户端
 type Client struct {
-	serverAddr  string
-	conn        *websocket.Conn
-	connected   bool
-	connLock    sync.RWMutex
-	stopChan    chan struct{}
-	reconnect   bool
+	serverAddr string
+	conn       *websocket.Conn
+	connected  bool
+	connLock   sync.RWMutex
+	stopChan   chan struct{}
+	reconnect  bool
 
 	// 回调函数
 	OnClipboardReceived func(content string)
@@ -35,7 +35,8 @@ func NewClient() *Client {
 // Connect 连接到服务端
 func (c *Client) Connect(serverAddr string) error {
 	c.connLock.Lock()
-	if c.connected {
+	if c.connected || c.reconnect {
+		// Already connected or already trying to connect
 		c.connLock.Unlock()
 		return nil
 	}
