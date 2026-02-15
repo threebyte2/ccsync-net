@@ -1,35 +1,59 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	goSync "sync"
+	"time"
 
-	"ccsync-net/clipboard"
-	"ccsync-net/config"
-	"ccsync-net/sync"
+	"ccsync-net/internal/shared"
 
 	wailsRun "github.com/wailsapp/wails/v2/pkg/runtime"
-
-	"github.com/energye/systray"
 )
 
 // App struct
 type App struct {
-	ctx        context.Context
-	cfg        *config.Config
-	server     *sync.Server
-	client     *sync.Client
-	clipboard  *clipboard.Monitor
-	lastCopied string
-	isQuitting bool
+	ctx          context.Context
+	httpClient   *http.Client
+	baseURL      string
+	sseConnected bool
+	sseLock      goSync.Mutex
 }
 
 // NewApp creates a new App application struct
 func NewApp() *App {
 	return &App{
-		server:    sync.NewServer(),
-		client:    sync.NewClient(),
-		clipboard: clipboard.NewMonitor(),
+		httpClient: &http.Client{
+			Timeout: 2 * time.Second,
+		},
+		baseURL: "http://localhost:12345",
+	}
+}
+
+// IsSSEConnected Returns true if the backend has an active SSE connection to the service
+func (a *App) IsSSEConnected() bool {
+	a.sseLock.Lock()
+	defer a.sseLock.Unlock()
+	return a.sseConnected
+}
+
+// setSSEConnected Helper to update state safely
+func (a *App) setSSEConnected(connected bool) {
+	a.sseLock.Lock()
+	defer a.sseLock.Unlock()
+	if a.sseConnected != connected {
+		a.sseConnected = connected
+		// Also emit event here if missed?
+		// No, monitor loop emits event. Just update state.
 	}
 }
 
@@ -37,208 +61,241 @@ func NewApp() *App {
 // so we can call the runtime methods
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
-	a.loadConfig()
+	a.checkAndStartService()
+	go a.monitorGlobalEvents()
+}
 
-	// Start systray
-	go systray.Run(a.onTrayReady, a.onTrayExit)
+func (a *App) monitorGlobalEvents() {
+	// Create a client with NO timeout for SSE
+	sseClient := &http.Client{
+		Timeout: 0,
+	}
 
-	a.initCallbacks() // Init callbacks first so logging works during clipboard start
-	a.initClipboard()
-
-	if a.cfg.AutoStart {
-		if a.cfg.Mode == "server" {
-			a.StartServer(a.cfg.ServerPort)
-		} else {
-			a.ConnectToServer(a.cfg.ServerAddress)
+	// Retry loop
+	for {
+		// Connect to SSE
+		resp, err := sseClient.Get(a.baseURL + "/events")
+		if err != nil {
+			// Service might be down or starting
+			a.setSSEConnected(false)
+			wailsRun.EventsEmit(a.ctx, "backend:sse:status", false)
+			time.Sleep(2 * time.Second)
+			continue
 		}
+
+		// Connected
+		a.setSSEConnected(true)
+		wailsRun.EventsEmit(a.ctx, "backend:sse:status", true)
+		wailsRun.LogInfo(a.ctx, "SSE Connected")
+
+		reader := bufio.NewReader(resp.Body)
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				a.setSSEConnected(false)
+				wailsRun.EventsEmit(a.ctx, "backend:sse:status", false)
+				break // Disconnected, retry
+			}
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "data:") {
+				data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+				if data == "shutdown" {
+					wailsRun.LogInfo(a.ctx, "Received shutdown signal from service")
+					wailsRun.Quit(a.ctx)
+					return // Exit loop
+				}
+			}
+		}
+		resp.Body.Close()
+		time.Sleep(1 * time.Second)
 	}
 }
 
-func (a *App) initClipboard() {
-	// clipboard.Init() already called in main.go
-	// if err := a.clipboard.Init(); err != nil {
-	// 	wailsRun.LogError(a.ctx, "剪贴板初始化失败: "+err.Error())
-	// }
-	a.clipboard.Start()
-}
-
-func (a *App) initCallbacks() {
-	// 剪贴板变化 -> 发送给网络
-	a.clipboard.OnChange = func(content string) {
-		// 防止回环：如果内容与最后一次处理的内容相同，则忽略
-		if content == a.lastCopied {
-			return
-		}
-
-		a.lastCopied = content
-		wailsRun.EventsEmit(a.ctx, "clipboard:local", content)
-
-		// 如果模式为 receive_only，则不发送
-		if a.cfg.SyncMode == "receive_only" {
-			wailsRun.EventsEmit(a.ctx, "log", "同步模式为只入，跳过发送")
-			return
-		}
-
-		if a.cfg.Mode == "server" && a.server.IsRunning() {
-			a.server.BroadcastClipboard(content, "server")
-		} else if a.cfg.Mode == "client" && a.client.IsConnected() {
-			a.client.SendClipboard(content, "client")
-		}
-	}
-
-	// 服务端收到消息 -> 更新本地剪贴板
-	a.server.OnClipboardReceived = func(content string) {
-		// 如果模式为 send_only，则不写入本地剪贴板
-		if a.cfg.SyncMode == "send_only" {
-			// 仍然可以通知界面收到了消息，但不写入
-			wailsRun.EventsEmit(a.ctx, "log", "同步模式为只出，跳过写入本地剪贴板")
-			return
-		}
-
-		if content != a.lastCopied {
-			a.clipboard.SetContent(content)
-			a.lastCopied = content
-			wailsRun.EventsEmit(a.ctx, "clipboard:remote", content)
-		}
-	}
-
-	a.server.OnClientConnected = func(count int) {
-		wailsRun.EventsEmit(a.ctx, "server:client_count", count)
-	}
-
-	a.server.OnClientDisconnected = func(count int) {
-		wailsRun.EventsEmit(a.ctx, "server:client_count", count)
-	}
-
-	// 客户端收到消息 -> 更新本地剪贴板
-	a.client.OnClipboardReceived = func(content string) {
-		// 如果模式为 send_only，则不写入本地剪贴板
-		if a.cfg.SyncMode == "send_only" {
-			wailsRun.EventsEmit(a.ctx, "log", "同步模式为只出，跳过写入本地剪贴板")
-			return
-		}
-
-		if content != a.lastCopied {
-			a.clipboard.SetContent(content)
-			a.lastCopied = content
-			wailsRun.EventsEmit(a.ctx, "clipboard:remote", content)
-		}
-	}
-
-	a.client.OnConnected = func() {
-		wailsRun.EventsEmit(a.ctx, "client:status", true)
-	}
-
-	a.client.OnDisconnected = func() {
-		wailsRun.EventsEmit(a.ctx, "client:status", false)
-	}
-
-	// 日志
-	a.server.OnLog = func(msg string) {
-		wailsRun.LogInfo(a.ctx, msg)
-		wailsRun.EventsEmit(a.ctx, "log", msg)
-	}
-	a.client.OnLog = func(msg string) {
-		wailsRun.LogInfo(a.ctx, msg)
-		wailsRun.EventsEmit(a.ctx, "log", msg)
-	}
-	a.clipboard.OnLog = func(msg string) {
-		wailsRun.LogInfo(a.ctx, msg)
-		wailsRun.EventsEmit(a.ctx, "log", msg)
-	}
-}
-
-// loadConfig 加载配置
-func (a *App) loadConfig() {
-	cfg, err := config.Load()
-	if err != nil {
-		wailsRun.LogError(a.ctx, "加载配置失败: "+err.Error())
-		a.cfg = config.DefaultConfig()
-	} else {
-		a.cfg = cfg
-	}
-}
-
-// SaveConfig 保存配置
-func (a *App) SaveConfig(cfg config.Config) error {
-	a.cfg.Mode = cfg.Mode
-	a.cfg.ServerPort = cfg.ServerPort
-	a.cfg.ServerAddress = cfg.ServerAddress
-	a.cfg.AutoStart = cfg.AutoStart
-	a.cfg.SyncMode = cfg.SyncMode // 保存 SyncMode
-	return a.cfg.Save()
-}
-
-// GetConfig 获取当前配置
-func (a *App) GetConfig() *config.Config {
-	return a.cfg
-}
-
-// StartServer 启动服务端
-func (a *App) StartServer(port int) error {
-	wailsRun.EventsEmit(a.ctx, "status", "正在启动服务端...")
-	err := a.server.Start(port)
+func (a *App) checkAndStartService() {
+	// 1. Check if service is responsive
+	resp, err := a.httpClient.Get(a.baseURL + "/status")
 	if err == nil {
-		wailsRun.EventsEmit(a.ctx, "status", fmt.Sprintf("服务端运行中 (端口: %d)", port))
-		wailsRun.EventsEmit(a.ctx, "server:running", true)
+		resp.Body.Close()
+		if resp.StatusCode == http.StatusOK {
+			wailsRun.LogInfo(a.ctx, "Background service is already running.")
+			return
+		}
 	}
-	return err
-}
 
-// StopServer 停止服务端
-func (a *App) StopServer() {
-	a.server.Stop()
-	wailsRun.EventsEmit(a.ctx, "status", "服务端已停止")
-	wailsRun.EventsEmit(a.ctx, "server:running", false)
-}
+	// 2. Service not running, attempt to start it
+	wailsRun.LogInfo(a.ctx, "Background service not found. Attempting to start...")
 
-// ConnectToServer 连接服务端
-func (a *App) ConnectToServer(addr string) error {
-	wailsRun.EventsEmit(a.ctx, "status", "正在连接到 "+addr+"...")
-	return a.client.Connect(addr)
-}
+	ex, err := os.Executable()
+	if err != nil {
+		wailsRun.LogError(a.ctx, "Failed to get executable path: "+err.Error())
+		return
+	}
+	exDir := filepath.Dir(ex)
 
-// Disconnect 断开连接
-func (a *App) Disconnect() {
-	a.client.Disconnect()
-	wailsRun.EventsEmit(a.ctx, "status", "已断开连接")
+	// Determine service executable name based on OS
+	serviceName := "ccsync-service"
+	if wailsRun.Environment(a.ctx).Platform == "windows" {
+		serviceName += ".exe"
+	}
+
+	servicePath := filepath.Join(exDir, serviceName)
+	if _, err := os.Stat(servicePath); os.IsNotExist(err) {
+		// Try development path (go run ...) or adjacent in build
+		// For dev, it might be tricky. Let's just assume same dir for production.
+		// Fallback for dev: try finding it in build/bin/ or ../
+		servicePath = filepath.Join(exDir, "..", serviceName) // e.g. wails dev builds in build/bin
+		if _, err := os.Stat(servicePath); os.IsNotExist(err) {
+			wailsRun.LogError(a.ctx, "Service executable not found at: "+filepath.Join(exDir, serviceName))
+			return
+		}
+	}
+
+	cmd := exec.Command(servicePath)
+	if err := cmd.Start(); err != nil {
+		wailsRun.LogError(a.ctx, "Failed to start service: "+err.Error())
+		return
+	}
+
+	wailsRun.LogInfo(a.ctx, "Service started successfully. PID: "+fmt.Sprint(cmd.Process.Pid))
+
+	// Wait for service to be ready (Poll for status)
+	for i := 0; i < 50; i++ {
+		time.Sleep(100 * time.Millisecond)
+		resp, err := a.httpClient.Get(a.baseURL + "/status")
+		if err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				wailsRun.LogInfo(a.ctx, "Service is ready and responding.")
+				return
+			}
+		}
+	}
+	wailsRun.LogError(a.ctx, "Service started but failed to respond within timeout.")
 }
 
 // shutdown 清理资源
 func (a *App) shutdown(ctx context.Context) {
-	a.clipboard.Stop()
-	a.server.Stop()
-	a.client.Disconnect()
+	// UI shutdown cleanup if needed
 }
 
 func (a *App) beforeClose(ctx context.Context) (prevent bool) {
-	if a.isQuitting {
-		return false
+	return false
+}
+
+// GetConfig 获取当前配置
+func (a *App) GetConfig() *shared.ConfigRequest {
+	resp, err := a.httpClient.Get(a.baseURL + "/config")
+	if err != nil {
+		wailsRun.LogError(a.ctx, "无法获取配置: "+err.Error())
+		return nil
 	}
-	// Default behavior: minimize to tray (hide window)
-	wailsRun.WindowHide(a.ctx)
-	return true
+	defer resp.Body.Close()
+
+	var cfg shared.ConfigRequest
+	if err := json.NewDecoder(resp.Body).Decode(&cfg); err != nil {
+		wailsRun.LogError(a.ctx, "配置解析失败: "+err.Error())
+		return nil
+	}
+	return &cfg
 }
 
-func (a *App) onTrayReady() {
-	systray.SetIcon(iconData)
-	systray.SetTitle("CCSync Net")
-	systray.SetTooltip("CCSync Net")
+// SaveConfig 保存配置
+func (a *App) SaveConfig(cfg shared.ConfigRequest) error {
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		return err
+	}
 
-	mShow := systray.AddMenuItem("显示主窗口", "Show Main Window")
-	mQuit := systray.AddMenuItem("退出", "Quit Application")
+	resp, err := a.httpClient.Post(a.baseURL+"/config", "application/json", bytes.NewBuffer(data))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
 
-	mShow.Click(func() {
-		wailsRun.WindowShow(a.ctx)
-	})
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("保存配置失败: %s", string(body))
+	}
 
-	mQuit.Click(func() {
-		a.isQuitting = true
-		systray.Quit()
-		wailsRun.Quit(a.ctx)
-	})
+	// Refresh status immediately
+	a.GetStatus()
+
+	return nil
 }
 
-func (a *App) onTrayExit() {
-	// Cleanup here
+// StartServerMode 切换到服务端模式并启动
+func (a *App) StartServerMode(port int) error {
+	cfg := a.GetConfig()
+	if cfg == nil {
+		return fmt.Errorf("无法获取当前配置")
+	}
+
+	cfg.Mode = "server"
+	cfg.ServerPort = port
+	// 保持其他配置不变
+
+	if err := a.SaveConfig(*cfg); err != nil {
+		return err
+	}
+
+	return a.StartSync()
+}
+
+// StartClientMode 切换到客户端模式并启动
+func (a *App) StartClientMode(address string) error {
+	cfg := a.GetConfig()
+	if cfg == nil {
+		return fmt.Errorf("无法获取当前配置")
+	}
+
+	cfg.Mode = "client"
+	cfg.ServerAddress = address
+
+	if err := a.SaveConfig(*cfg); err != nil {
+		return err
+	}
+
+	return a.StartSync()
+}
+
+// StartSync 启动同步
+func (a *App) StartSync() error {
+	resp, err := a.httpClient.Post(a.baseURL+"/start", "application/json", nil)
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	return nil
+}
+
+// StopSync 停止同步
+func (a *App) StopSync() error {
+	resp, err := a.httpClient.Post(a.baseURL+"/stop", "application/json", nil)
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	return nil
+}
+
+// GetStatus 获取服务状态
+func (a *App) GetStatus() *shared.StatusResponse {
+	resp, err := a.httpClient.Get(a.baseURL + "/status")
+	if err != nil {
+		// return default offline status
+		return &shared.StatusResponse{
+			Running: false,
+			Message: "服务未连接",
+		}
+	}
+	defer resp.Body.Close()
+
+	var status shared.StatusResponse
+	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+		return &shared.StatusResponse{
+			Running: false,
+			Message: "状态解析失败",
+		}
+	}
+	return &status
 }

@@ -43,18 +43,26 @@ install_tool() {
         debian|ubuntu|linuxmint|kali)
             echo "使用 apt-get 安装 $TOOL..."
             sudo apt-get update
+            # 安装 systray 编译依赖
+            sudo apt-get install -y libgtk-3-dev libappindicator3-dev
             sudo apt-get install -y $TOOL
             ;;
         fedora|rhel|centos)
             echo "使用 dnf 安装 $TOOL..."
+            # 安装 systray 编译依赖
+            sudo dnf install -y gtk3-devel libappindicator-gtk3-devel
             sudo dnf install -y $TOOL
             ;;
         arch|manjaro)
             echo "使用 pacman 安装 $TOOL..."
+            # 安装 systray 编译依赖
+            sudo pacman -S --noconfirm gtk3 libappindicator-gtk3
             sudo pacman -S --noconfirm $TOOL
             ;;
         opensuse*|suse)
             echo "使用 zypper 安装 $TOOL..."
+            # 安装 systray 编译依赖
+            sudo zypper install -y gtk3-devel libappindicator3-devel
             sudo zypper install -y $TOOL
             ;;
         *)

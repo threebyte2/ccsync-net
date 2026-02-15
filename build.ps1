@@ -58,8 +58,20 @@ if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
 
+
+Write-Host "📂 Building Background Service..."
+go build -ldflags "-H windowsgui" -o build\bin\ccsync-service.exe .\cmd\ccsync-service
+
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "❌ Service Build failed."
+    exit $LASTEXITCODE
+}
+
 Write-Host ""
 Write-Host "✅ Build complete!"
-Write-Host "The executable can be found in: build\bin\ccsync-net.exe"
+Write-Host "The executables can be found in: build\bin\"
+Write-Host "  - ccsync-net.exe (UI)"
+Write-Host "  - ccsync-service.exe (Background Service)"
+
 Write-Host ""
 #
