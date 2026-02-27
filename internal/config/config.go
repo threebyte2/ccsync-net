@@ -65,6 +65,8 @@ func Load() (*Config, error) {
 
 	var cfg Config
 	if err := json.Unmarshal(data, &cfg); err != nil {
+		// 如果解析失败，可能是配置损坏，备份异常文件避免原数据彻底丢失
+		os.Rename(path, path+".bak")
 		return DefaultConfig(), nil
 	}
 
@@ -83,5 +85,11 @@ func (c *Config) Save() error {
 		return err
 	}
 
-	return os.WriteFile(path, data, 0644)
+	// 写入临时文件，然后通过原子级重命名覆盖原文件
+	tmpPath := path + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
+		return err
+	}
+
+	return os.Rename(tmpPath, path)
 }
