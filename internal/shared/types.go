@@ -11,6 +11,7 @@ type ConfigRequest struct {
 
 // StatusResponse represents the current status of the service
 type StatusResponse struct {
+	Mode            string `json:"mode"`
 	Running         bool   `json:"running"`
 	ClientConnected bool   `json:"client_connected"`
 	ClientCount     int    `json:"client_count"`

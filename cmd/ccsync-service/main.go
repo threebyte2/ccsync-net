@@ -273,11 +273,16 @@ func broadcastMSE(msg string) {
 
 func getCurrentStatus() shared.StatusResponse {
 	status := shared.StatusResponse{
+		Mode:            "server",
 		Running:         false,
 		ClientConnected: false,
 		ClientCount:     0,
 		LastCopied:      lastCopied,
 		Message:         "Service Running",
+	}
+
+	if cfg != nil && cfg.Mode != "" {
+		status.Mode = cfg.Mode
 	}
 
 	if server != nil {
@@ -288,7 +293,7 @@ func getCurrentStatus() shared.StatusResponse {
 		status.ClientConnected = client.IsConnected()
 	}
 
-	if cfg != nil && cfg.Mode == "server" {
+	if status.Mode == "server" {
 		if status.Running {
 			status.Message = "Server Running"
 		} else {

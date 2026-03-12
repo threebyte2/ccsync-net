@@ -31,8 +31,12 @@ window.onload = async () => {
   };
 
   // Listen for SSE status events
-  window.runtime.EventsOn("backend:sse:status", (connected) => {
+  window.runtime.EventsOn("backend:sse:status", async (connected) => {
     updateBackendStatus(connected);
+    // Re-sync snapshot once when stream (re)connects to avoid missed early events.
+    if (connected) {
+      await syncStatusSnapshot();
+    }
   });
 
   // Listen for runtime status updates (event-driven, no polling)
@@ -77,6 +81,9 @@ window.onload = async () => {
     }
   });
 
+  // One-time snapshot sync for reopen-from-tray scenario.
+  await syncStatusSnapshot();
+
 };
 
 function formatSize(bytes) {
@@ -85,6 +92,24 @@ function formatSize(bytes) {
   const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
+async function syncStatusSnapshot() {
+  try {
+    const connected = await window.go.main.App.IsSSEConnected();
+    updateBackendStatus(connected);
+  } catch (e) {
+    // Ignore transient startup errors; SSE events will catch up.
+  }
+
+  try {
+    const status = await window.go.main.App.GetStatus();
+    if (status) {
+      updateStatusUI(status);
+    }
+  } catch (e) {
+    // Ignore transient startup errors; SSE events will catch up.
+  }
 }
 
 let isBackendConnected = false;
@@ -112,6 +137,13 @@ function updateStatusUI(status) {
   const statusBadget = document.getElementById("appStatus");
   const clientCountSpan = document.getElementById("clientCount");
   const connStatusSpan = document.getElementById("connStatus");
+  const statusMode = status.mode === "client" ? "client" : "server";
+
+  // Keep UI mode aligned with backend runtime mode, especially on first open.
+  if (currentConfig.mode !== statusMode) {
+    currentConfig.mode = statusMode;
+    switchModeUI(statusMode);
+  }
 
   // Update Last Copied Login
   // Update Last Copied Login (ignore if it is empty since we might have copied a file)
@@ -130,7 +162,7 @@ function updateStatusUI(status) {
   }
 
   // Update Mode-specific UI
-  if (currentConfig.mode === "server") {
+  if (statusMode === "server") {
     if (status.running) {
       updateServerBtn(true);
       clientCountSpan.innerText = status.client_count || 0;

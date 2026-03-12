@@ -282,6 +282,7 @@ func (a *App) GetStatus() *shared.StatusResponse {
 	if err != nil {
 		// return default offline status
 		return &shared.StatusResponse{
+			Mode:    "server",
 			Running: false,
 			Message: "服务未连接",
 		}
@@ -291,6 +292,7 @@ func (a *App) GetStatus() *shared.StatusResponse {
 	var status shared.StatusResponse
 	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
 		return &shared.StatusResponse{
+			Mode:    "server",
 			Running: false,
 			Message: "状态解析失败",
 		}

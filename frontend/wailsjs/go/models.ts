@@ -21,6 +21,7 @@ export namespace shared {
 	    }
 	}
 	export class StatusResponse {
+	    mode: string;
 	    running: boolean;
 	    client_connected: boolean;
 	    client_count: number;
@@ -33,6 +34,7 @@ export namespace shared {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.mode = source["mode"];
 	        this.running = source["running"];
 	        this.client_connected = source["client_connected"];
 	        this.client_count = source["client_count"];
