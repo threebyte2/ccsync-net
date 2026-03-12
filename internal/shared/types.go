@@ -17,3 +17,14 @@ type StatusResponse struct {
 	LastCopied      string `json:"last_copied"`
 	Message         string `json:"message"`
 }
+
+// AcceptFileRequest represents a request from UI to save a received file
+type AcceptFileRequest struct {
+	FileID   string `json:"file_id"`
+	SavePath string `json:"save_path"`
+}
+
+// SendFilesRequest represents a request from UI to send files explicitly
+type SendFilesRequest struct {
+	Paths []string `json:"paths"`
+}

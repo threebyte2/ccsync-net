@@ -33,6 +33,10 @@ func main() {
 				wailsRun.WindowSetAlwaysOnTop(app.ctx, false)
 			},
 		},
+		DragAndDrop: &options.DragAndDrop{
+			EnableFileDrop: true,
+			DisableWebViewDrop: true,
+		},
 		OnStartup:     app.startup,
 		OnShutdown:    app.shutdown,
 		OnBeforeClose: app.beforeClose,

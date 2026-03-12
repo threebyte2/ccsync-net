@@ -66,6 +66,8 @@ func main() {
 	http.HandleFunc("/start", handleStart)
 	http.HandleFunc("/stop", handleStop)
 	http.HandleFunc("/events", handleEvents)
+	http.HandleFunc("/accept_file", handleAcceptFile)
+	http.HandleFunc("/send_files", handleSendFiles)
 
 	go func() {
 		fmt.Println("Starting IPC server on :12345")
@@ -300,6 +302,18 @@ func initMonitor() {
 		}
 	}
 
+	server.OnFileCopyReceived = func(meta *sync.FileMeta) {
+		if cfg.SyncMode == "send_only" {
+			return
+		}
+		// Push SSE to Wails
+		data, _ := json.Marshal(map[string]interface{}{
+			"type": "file_copy",
+			"meta": meta,
+		})
+		broadcastMSE(string(data))
+	}
+
 	client.OnClipboardReceived = func(content string) {
 		if cfg.SyncMode == "send_only" {
 			return
@@ -309,6 +323,18 @@ func initMonitor() {
 			lastCopied = content
 			fmt.Println("Remote Clipboard Received:", content)
 		}
+	}
+
+	client.OnFileCopyReceived = func(meta *sync.FileMeta) {
+		if cfg.SyncMode == "send_only" {
+			return
+		}
+		// Push SSE to Wails
+		data, _ := json.Marshal(map[string]interface{}{
+			"type": "file_copy",
+			"meta": meta,
+		})
+		broadcastMSE(string(data))
 	}
 }
 
@@ -409,4 +435,91 @@ func handleShutdown(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "POST" {
 		systray.Quit()
 	}
+}
+
+func handleAcceptFile(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req shared.AcceptFileRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Bad request", http.StatusBadRequest)
+		return
+	}
+
+	// 准备接收文件
+	var transfer *sync.FileTransferManager
+	var isServer bool
+
+	if cfg.Mode == "server" && server != nil && server.IsRunning() {
+		transfer = server.GetTransferManager()
+		isServer = true
+	} else if cfg.Mode == "client" && client != nil && client.IsConnected() {
+		transfer = client.GetTransferManager()
+		isServer = false
+	} else {
+		http.Error(w, "Not connected", http.StatusServiceUnavailable)
+		return
+	}
+
+	if err := transfer.PrepareIncomingFile(req.FileID, req.SavePath); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if isServer {
+		server.BroadcastFileRequest(req.FileID, "server")
+	} else {
+		client.SendFileRequest(req.FileID, "client")
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+func handleSendFiles(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req shared.SendFilesRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Bad request", http.StatusBadRequest)
+		return
+	}
+
+	var transfer *sync.FileTransferManager
+	var isServer bool
+
+	if cfg.Mode == "server" && server != nil && server.IsRunning() {
+		transfer = server.GetTransferManager()
+		isServer = true
+	} else if cfg.Mode == "client" && client != nil && client.IsConnected() {
+		transfer = client.GetTransferManager()
+		isServer = false
+	} else {
+		http.Error(w, "Not connected", http.StatusServiceUnavailable)
+		return
+	}
+
+	for _, p := range req.Paths {
+		meta, err := transfer.GetFileInfo(p)
+		if err != nil {
+			continue // Skip invalid/directories for now
+		}
+
+		if err := transfer.StartOutgoingFile(meta); err != nil {
+			continue
+		}
+
+		if isServer {
+			server.BroadcastFileCopy(meta, "server")
+		} else {
+			client.SendFileCopy(meta, "client")
+		}
+	}
+
+	w.WriteHeader(http.StatusOK)
 }

@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 
 	"golang.design/x/clipboard"
 )
@@ -21,8 +22,12 @@ type Monitor struct {
 	lastContent string
 	lastLock    sync.RWMutex
 	// 回调函数
-	OnChange func(content string)
-	OnLog    func(msg string)
+	OnChange     func(content string)
+	OnFileCopy   func(files []string)
+	OnLog        func(msg string)
+	
+	lastFiles    string
+	lastFileLock sync.RWMutex
 }
 
 // NewMonitor 创建剪贴板监听器
@@ -131,6 +136,10 @@ func (m *Monitor) watchLoop(ctx context.Context) {
 		return
 	}
 	
+	// Start file polling for non-linux
+	go m.pollFilesLoop(ctx)
+
+	
 	// Non-Linux fallback using library Watch
 	// 初始化
 	initial := m.GetContent()
@@ -189,7 +198,58 @@ func (m *Monitor) watchLoopLinux(ctx context.Context) {
 		// We add a small delay to ensure content is ready or just read it
 		content := m.GetContent()
 		m.processChange(content)
+		
+		// Also check for files
+		m.checkFiles()
 	}
+}
+
+// pollFilesLoop is a fallback for checking files periodically if event-based watching is unavailable
+func (m *Monitor) pollFilesLoop(ctx context.Context) {
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+	
+	// Init initial files
+	files, _ := HasFile()
+	m.setLastFiles(strings.Join(files, "\n"))
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			m.checkFiles()
+		}
+	}
+}
+
+func (m *Monitor) checkFiles() {
+	files, err := HasFile()
+	if err != nil || len(files) == 0 {
+		return
+	}
+	
+	filesStr := strings.Join(files, "\n")
+	
+	m.lastFileLock.RLock()
+	last := m.lastFiles
+	m.lastFileLock.RUnlock()
+	
+	if filesStr == last {
+		return
+	}
+	
+	m.setLastFiles(filesStr)
+	
+	if m.OnFileCopy != nil {
+		m.OnFileCopy(files)
+	}
+}
+
+func (m *Monitor) setLastFiles(files string) {
+	m.lastFileLock.Lock()
+	m.lastFiles = files
+	m.lastFileLock.Unlock()
 }
 
 func (m *Monitor) processChange(current string) {

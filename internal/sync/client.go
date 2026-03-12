@@ -17,9 +17,13 @@ type Client struct {
 	connLock   sync.RWMutex
 	stopChan   chan struct{}
 	reconnect  bool
+	transfer   *FileTransferManager
 
 	// 回调函数
-	OnClipboardReceived func(content string)
+	OnClipboardReceived  func(content string)
+	OnFileCopyReceived   func(meta *FileMeta)
+	OnFileRequestReceived func(fileID string)
+	OnFileChunkReceived  func(chunk *FileChunk)
 	OnConnected         func()
 	OnDisconnected      func()
 	OnLog               func(msg string)
@@ -29,6 +33,7 @@ type Client struct {
 func NewClient() *Client {
 	return &Client{
 		stopChan: make(chan struct{}),
+		transfer: NewFileTransferManager(),
 	}
 }
 
@@ -86,6 +91,68 @@ func (c *Client) SendClipboard(content, source string) error {
 	}
 
 	msg := NewClipboardMessage(content, source)
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return err
+	}
+
+	return conn.WriteMessage(websocket.TextMessage, data)
+}
+
+// SendFileRequest 发送拉取文件请求
+func (c *Client) SendFileRequest(fileID string, source string) error {
+	c.connLock.RLock()
+	conn := c.conn
+	connected := c.connected
+	c.connLock.RUnlock()
+
+	if !connected || conn == nil {
+		return nil
+	}
+
+	msg := NewFileRequestMessage(fileID, source)
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return err
+	}
+
+	return conn.WriteMessage(websocket.TextMessage, data)
+}
+
+// SendFileChunk 发送文件分块数据
+func (c *Client) SendFileChunk(chunk *FileChunk, source string) error {
+	c.connLock.RLock()
+	conn := c.conn
+	connected := c.connected
+	c.connLock.RUnlock()
+
+	if !connected || conn == nil {
+		return nil
+	}
+
+	msg := NewFileChunkMessage(chunk, source)
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return err
+	}
+
+	return conn.WriteMessage(websocket.TextMessage, data)
+}
+
+
+
+// SendFileCopy 发送文件复制信令
+func (c *Client) SendFileCopy(meta *FileMeta, source string) error {
+	c.connLock.RLock()
+	conn := c.conn
+	connected := c.connected
+	c.connLock.RUnlock()
+
+	if !connected || conn == nil {
+		return nil
+	}
+
+	msg := NewFileCopyMessage(meta, source)
 	data, err := json.Marshal(msg)
 	if err != nil {
 		return err
@@ -168,6 +235,24 @@ func (c *Client) readLoop(conn *websocket.Conn) {
 			if c.OnClipboardReceived != nil {
 				c.OnClipboardReceived(msg.Content)
 			}
+		case TypeFileCopy:
+			if c.OnFileCopyReceived != nil && msg.FileMeta != nil {
+				c.OnFileCopyReceived(msg.FileMeta)
+			}
+		case TypeFileRequest:
+			if c.OnFileRequestReceived != nil {
+				c.OnFileRequestReceived(msg.Content)
+			}
+			// 如果是向本地请求分块，开启协程发送
+			go c.startSendingFile(msg.Content, msg.Source)
+		case TypeFileChunk:
+			if c.OnFileChunkReceived != nil && msg.FileChunk != nil {
+				c.OnFileChunkReceived(msg.FileChunk)
+			}
+			// 写入本地
+			if msg.FileChunk != nil {
+				c.transfer.WriteFileChunk(msg.FileChunk)
+			}
 		case TypePong:
 			// 心跳响应，忽略
 		}
@@ -204,5 +289,31 @@ func (c *Client) log(msg string) {
 	log.Println("[Client]", msg)
 	if c.OnLog != nil {
 		c.OnLog(msg)
+	}
+}
+
+// ---------------------- File Transfer APIs ----------------------
+
+func (c *Client) GetTransferManager() *FileTransferManager {
+	return c.transfer
+}
+
+func (c *Client) startSendingFile(fileID string, requester string) {
+	// Chunk size 1MB
+	chunkSize := 1024 * 1024
+	var offset int64 = 0
+	
+	for {
+		chunk, err := c.transfer.ReadFileChunk(fileID, offset, chunkSize)
+		if err != nil {
+			c.log("Error reading file chunk: " + err.Error())
+			break
+		}
+		
+		c.SendFileChunk(chunk, "client")
+		if chunk.IsLast {
+			break
+		}
+		offset += int64(len(chunk.Data))
 	}
 }

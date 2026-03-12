@@ -23,10 +23,14 @@ type Server struct {
 	server      *http.Server
 	running     bool
 	runningLock sync.RWMutex
+	transfer    *FileTransferManager
 
 	// 回调函数
-	OnClipboardReceived func(content string)
-	OnClientConnected   func(count int)
+	OnClipboardReceived  func(content string)
+	OnFileCopyReceived   func(meta *FileMeta)
+	OnFileRequestReceived func(fileID string)
+	OnFileChunkReceived  func(chunk *FileChunk)
+	OnClientConnected    func(count int)
 	OnClientDisconnected func(count int)
 	OnLog               func(msg string)
 }
@@ -34,7 +38,8 @@ type Server struct {
 // NewServer 创建服务端实例
 func NewServer() *Server {
 	return &Server{
-		clients: make(map[*websocket.Conn]bool),
+		clients:  make(map[*websocket.Conn]bool),
+		transfer: NewFileTransferManager(),
 	}
 }
 
@@ -146,6 +151,24 @@ func (s *Server) BroadcastClipboard(content, source string) {
 	s.Broadcast(msg)
 }
 
+// BroadcastFileCopy 广播文件复制信令
+func (s *Server) BroadcastFileCopy(meta *FileMeta, source string) {
+	msg := NewFileCopyMessage(meta, source)
+	s.Broadcast(msg)
+}
+
+// BroadcastFileRequest 广播文件请求
+func (s *Server) BroadcastFileRequest(fileID string, source string) {
+	msg := NewFileRequestMessage(fileID, source)
+	s.Broadcast(msg)
+}
+
+// BroadcastFileChunk 广播文件数据块
+func (s *Server) BroadcastFileChunk(chunk *FileChunk, source string) {
+	msg := NewFileChunkMessage(chunk, source)
+	s.Broadcast(msg)
+}
+
 func (s *Server) handleConnection(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -200,6 +223,53 @@ func (s *Server) handleConnection(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			s.clientsLock.RUnlock()
+			
+		case TypeFileCopy:
+			if s.OnFileCopyReceived != nil && msg.FileMeta != nil {
+				s.OnFileCopyReceived(msg.FileMeta)
+			}
+			// 转发给其他客户端
+			s.clientsLock.RLock()
+			for c := range s.clients {
+				if c != conn {
+					c.WriteMessage(websocket.TextMessage, data)
+				}
+			}
+			s.clientsLock.RUnlock()
+
+		case TypeFileRequest:
+			if s.OnFileRequestReceived != nil {
+				s.OnFileRequestReceived(msg.Content)
+			}
+			
+			// 如果该文件在本地允许发送，则开始发送分块
+			go s.startSendingFile(msg.Content, msg.Source)
+
+			s.clientsLock.RLock()
+			for c := range s.clients {
+				if c != conn {
+					c.WriteMessage(websocket.TextMessage, data)
+				}
+			}
+			s.clientsLock.RUnlock()
+
+		case TypeFileChunk:
+			if s.OnFileChunkReceived != nil && msg.FileChunk != nil {
+				s.OnFileChunkReceived(msg.FileChunk)
+			}
+			
+			// 如果是发给本地的，写入本地
+			if msg.FileChunk != nil {
+				s.transfer.WriteFileChunk(msg.FileChunk)
+			}
+
+			s.clientsLock.RLock()
+			for c := range s.clients {
+				if c != conn {
+					c.WriteMessage(websocket.TextMessage, data)
+				}
+			}
+			s.clientsLock.RUnlock()
 
 		case TypePing:
 			pong := NewPongMessage()
@@ -234,4 +304,30 @@ func itoa(n int) string {
 		result = "-" + result
 	}
 	return result
+}
+
+// ---------------------- File Transfer APIs ----------------------
+
+func (s *Server) GetTransferManager() *FileTransferManager {
+	return s.transfer
+}
+
+func (s *Server) startSendingFile(fileID string, requester string) {
+	// Chunk size 1MB (可以根据网络情况调整)
+	chunkSize := 1024 * 1024
+	var offset int64 = 0
+	
+	for {
+		chunk, err := s.transfer.ReadFileChunk(fileID, offset, chunkSize)
+		if err != nil {
+			s.log("Error reading file chunk: " + err.Error())
+			break
+		}
+		
+		s.BroadcastFileChunk(chunk, "server")
+		if chunk.IsLast {
+			break
+		}
+		offset += int64(len(chunk.Data))
+	}
 }

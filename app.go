@@ -103,6 +103,16 @@ func (a *App) monitorGlobalEvents() {
 					wailsRun.LogInfo(a.ctx, "Received shutdown signal from service")
 					wailsRun.Quit(a.ctx)
 					return // Exit loop
+				} else if strings.HasPrefix(data, "{") {
+					// Parse as JSON event wrapper
+					var evt map[string]interface{}
+					if err := json.Unmarshal([]byte(data), &evt); err == nil {
+						evtType, _ := evt["type"].(string)
+						if evtType == "file_copy" {
+							// Emit to Vue
+							wailsRun.EventsEmit(a.ctx, "backend:file_copy", evt["meta"])
+						}
+					}
 				}
 			}
 		}
@@ -298,4 +308,59 @@ func (a *App) GetStatus() *shared.StatusResponse {
 		}
 	}
 	return &status
+}
+
+// SaveFileDialog 弹出系统保存文件对话框
+func (a *App) SaveFileDialog(defaultName string) (string, error) {
+	return wailsRun.SaveFileDialog(a.ctx, wailsRun.SaveDialogOptions{
+		DefaultFilename: defaultName,
+		Title:           "另存为...",
+	})
+}
+
+// AcceptFile 接受文件并指定保存路径
+func (a *App) AcceptFile(fileID string, savePath string) error {
+	req := shared.AcceptFileRequest{
+		FileID:   fileID,
+		SavePath: savePath,
+	}
+
+	data, err := json.Marshal(req)
+	if err != nil {
+		return err
+	}
+
+	resp, err := a.httpClient.Post(a.baseURL+"/accept_file", "application/json", bytes.NewBuffer(data))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to accept file")
+	}
+	return nil
+}
+
+// SendFiles 请求发送本地文件列表
+func (a *App) SendFiles(paths []string) error {
+	req := shared.SendFilesRequest{
+		Paths: paths,
+	}
+
+	data, err := json.Marshal(req)
+	if err != nil {
+		return err
+	}
+
+	resp, err := a.httpClient.Post(a.baseURL+"/send_files", "application/json", bytes.NewBuffer(data))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to send files")
+	}
+	return nil
 }

@@ -36,9 +36,52 @@ window.onload = async () => {
     updateBackendStatus(connected);
   });
 
+  // Listen for file drop events from Wails
+  window.runtime.EventsOn("wails:file-drop", async (x, y, paths) => {
+    if (!paths || paths.length === 0) return;
+    log(`⏳ 准备发送 ${paths.length} 个拖入的文件...`);
+    try {
+      await window.go.main.App.SendFiles(paths);
+      log(`✅ 发送信号已发出，等待对方拉取...`);
+      showToast(`已请求发送 ${paths.length} 个文件`, "success");
+    } catch(e) {
+      log(`❌ 发送文件失败: ${e}`);
+      showToast(`发送失败`, "error");
+    }
+  });
+
+  // Listen for file copy received events
+  window.runtime.EventsOn("backend:file_copy", async (meta) => {
+    const sizeStr = formatSize(meta.size);
+    log(`📦 收到文件传送请求: ${meta.name} (${sizeStr})`);
+    showToast(`收到文件: ${meta.name}`, "info");
+
+    try {
+      // 唤起另存为对话框
+      const savePath = await window.go.main.App.SaveFileDialog(meta.name);
+      if (savePath) {
+        log(`⏳ 确认接收: ${meta.name} -> ${savePath}`);
+        await window.go.main.App.AcceptFile(meta.id, savePath);
+        showToast(`开始接收: ${meta.name}`, "success");
+      } else {
+        log(`🚫 已取消接收: ${meta.name}`);
+      }
+    } catch(e) {
+      log(`❌ 接收交互出错: ${e}`);
+    }
+  });
+
   // Start polling status
   startPolling();
 };
+
+function formatSize(bytes) {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
 
 function startPolling() {
   if (pollingInterval) clearInterval(pollingInterval);
@@ -88,9 +131,10 @@ function updateStatusUI(status) {
   const connStatusSpan = document.getElementById("connStatus");
 
   // Update Last Copied Login
+  // Update Last Copied Login (ignore if it is empty since we might have copied a file)
   if (status.last_copied && status.last_copied !== lastCopiedContent) {
     lastCopiedContent = status.last_copied;
-    log(`剪贴板更新: ${preview(lastCopiedContent)}`);
+    log(`📄 剪贴板文本更新: ${preview(lastCopiedContent)}`);
   }
 
   // Update Status Badge
