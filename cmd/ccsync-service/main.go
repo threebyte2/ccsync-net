@@ -243,6 +243,8 @@ func handleEvents(w http.ResponseWriter, r *http.Request) {
 	// Without this, Go HTTP never sends headers back, and client.Get() blocks forever
 	fmt.Fprintf(w, "data: connected\n\n")
 	flusher.Flush()
+	fmt.Fprintf(w, "data: %s\n\n", statusEventMessage())
+	flusher.Flush()
 
 	notify := r.Context().Done()
 
@@ -269,6 +271,54 @@ func broadcastMSE(msg string) {
 	}
 }
 
+func getCurrentStatus() shared.StatusResponse {
+	status := shared.StatusResponse{
+		Running:         false,
+		ClientConnected: false,
+		ClientCount:     0,
+		LastCopied:      lastCopied,
+		Message:         "Service Running",
+	}
+
+	if server != nil {
+		status.Running = server.IsRunning()
+		status.ClientCount = server.GetClientCount()
+	}
+	if client != nil {
+		status.ClientConnected = client.IsConnected()
+	}
+
+	if cfg != nil && cfg.Mode == "server" {
+		if status.Running {
+			status.Message = "Server Running"
+		} else {
+			status.Message = "Server Stopped"
+		}
+	} else {
+		// Client mode: use Running field as the active connection state
+		status.Running = status.ClientConnected
+		if status.Running {
+			status.Message = "Client Connected"
+		} else {
+			status.Message = "Client Disconnected"
+		}
+	}
+
+	return status
+}
+
+func statusEventMessage() string {
+	data, _ := json.Marshal(map[string]interface{}{
+		"type":   "status",
+		"status": getCurrentStatus(),
+	})
+	return string(data)
+}
+
+func broadcastStatus() {
+	broadcastMSE(statusEventMessage())
+}
+
 func initMonitor() {
 	clipMonitor.Start()
 
@@ -277,6 +327,7 @@ func initMonitor() {
 			return
 		}
 		lastCopied = content
+		broadcastStatus()
 
 		fmt.Println("Clipboard Changed:", content)
 
@@ -298,6 +349,7 @@ func initMonitor() {
 		if content != lastCopied {
 			clipMonitor.SetContent(content)
 			lastCopied = content
+			broadcastStatus()
 			fmt.Println("Remote Clipboard Received:", content)
 		}
 	}
@@ -321,6 +373,7 @@ func initMonitor() {
 		if content != lastCopied {
 			clipMonitor.SetContent(content)
 			lastCopied = content
+			broadcastStatus()
 			fmt.Println("Remote Clipboard Received:", content)
 		}
 	}
@@ -336,6 +389,24 @@ func initMonitor() {
 		})
 		broadcastMSE(string(data))
 	}
+
+	server.OnClientConnected = func(count int) {
+		_ = count
+		broadcastStatus()
+	}
+
+	server.OnClientDisconnected = func(count int) {
+		_ = count
+		broadcastStatus()
+	}
+
+	client.OnConnected = func() {
+		broadcastStatus()
+	}
+
+	client.OnDisconnected = func() {
+		broadcastStatus()
+	}
 }
 
 func startSync() {
@@ -344,11 +415,13 @@ func startSync() {
 	} else {
 		go client.Connect(cfg.ServerAddress)
 	}
+	broadcastStatus()
 }
 
 func stopSync() {
 	server.Stop()
 	client.Disconnect()
+	broadcastStatus()
 }
 
 // HTTP Handlers
@@ -382,6 +455,7 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 			time.Sleep(100 * time.Millisecond)
 			startSync()
 		}
+		broadcastStatus()
 
 		json.NewEncoder(w).Encode(cfg)
 	}
@@ -389,32 +463,7 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 
 func handleStatus(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	status := shared.StatusResponse{
-		Running:         server.IsRunning(), // Default for server, overrided below
-		ClientConnected: client.IsConnected(),
-		ClientCount:     server.GetClientCount(),
-		LastCopied:      lastCopied,
-		Message:         "Service Running",
-	}
-
-	if cfg.Mode == "server" {
-		status.Running = server.IsRunning()
-		if status.Running {
-			status.Message = "Server Running"
-		} else {
-			status.Message = "Server Stopped"
-		}
-	} else {
-		// Client mode
-		status.Running = client.IsConnected() // We use Running field to indicate "Active"
-		if status.Running {
-			status.Message = "Client Connected"
-		} else {
-			status.Message = "Client Disconnected"
-		}
-	}
-
-	json.NewEncoder(w).Encode(status)
+	json.NewEncoder(w).Encode(getCurrentStatus())
 }
 
 func handleStart(w http.ResponseWriter, r *http.Request) {

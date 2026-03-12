@@ -29,7 +29,7 @@ func WriteFiles(paths []string) error {
 	if len(paths) == 0 {
 		return nil
 	}
-	
+
 	switch runtime.GOOS {
 	case "windows":
 		return writeFilesWindows(paths)
@@ -49,7 +49,7 @@ func hasFileWindows() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	
+
 	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
 	var result []string
 	for _, line := range lines {
@@ -136,7 +136,7 @@ func hasFileDarwin() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	
+
 	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
 	var result []string
 	for _, line := range lines {
@@ -157,7 +157,7 @@ func writeFilesDarwin(paths []string) error {
 			applescriptPaths = append(applescriptPaths, fmt.Sprintf(`POSIX file "%s"`, abs))
 		}
 	}
-	
+
 	if len(applescriptPaths) == 0 {
 		return nil
 	}

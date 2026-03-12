@@ -111,6 +111,9 @@ func (a *App) monitorGlobalEvents() {
 						if evtType == "file_copy" {
 							// Emit to Vue
 							wailsRun.EventsEmit(a.ctx, "backend:file_copy", evt["meta"])
+						} else if evtType == "status" {
+							// Emit latest runtime status to frontend
+							wailsRun.EventsEmit(a.ctx, "backend:status", evt["status"])
 						}
 					}
 				}
@@ -168,19 +171,7 @@ func (a *App) checkAndStartService() {
 
 	wailsRun.LogInfo(a.ctx, "Service started successfully. PID: "+fmt.Sprint(cmd.Process.Pid))
 
-	// Wait for service to be ready (Poll for status)
-	for i := 0; i < 50; i++ {
-		time.Sleep(100 * time.Millisecond)
-		resp, err := a.httpClient.Get(a.baseURL + "/status")
-		if err == nil {
-			resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
-				wailsRun.LogInfo(a.ctx, "Service is ready and responding.")
-				return
-			}
-		}
-	}
-	wailsRun.LogError(a.ctx, "Service started but failed to respond within timeout.")
+	// No polling here: backend readiness will be reflected via SSE reconnect events.
 }
 
 // shutdown 清理资源
@@ -226,9 +217,6 @@ func (a *App) SaveConfig(cfg shared.ConfigRequest) error {
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("保存配置失败: %s", string(body))
 	}
-
-	// Refresh status immediately
-	a.GetStatus()
 
 	return nil
 }

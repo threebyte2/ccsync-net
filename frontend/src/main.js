@@ -1,7 +1,6 @@
 // JS Logic
 let currentConfig = {};
 let lastCopiedContent = "";
-let pollingInterval = null;
 
 window.onload = async () => {
   // Bind JS functions for HTML
@@ -36,8 +35,15 @@ window.onload = async () => {
     updateBackendStatus(connected);
   });
 
-  // Listen for file drop events from Wails
-  window.runtime.EventsOn("wails:file-drop", async (x, y, paths) => {
+  // Listen for runtime status updates (event-driven, no polling)
+  window.runtime.EventsOn("backend:status", (status) => {
+    if (status) {
+      updateStatusUI(status);
+    }
+  });
+
+  // Listen for native drag-and-drop events from Wails (Windows/Linux/macOS)
+  window.runtime.OnFileDrop(async (x, y, paths) => {
     if (!paths || paths.length === 0) return;
     log(`⏳ 准备发送 ${paths.length} 个拖入的文件...`);
     try {
@@ -48,7 +54,7 @@ window.onload = async () => {
       log(`❌ 发送文件失败: ${e}`);
       showToast(`发送失败`, "error");
     }
-  });
+  }, false);
 
   // Listen for file copy received events
   window.runtime.EventsOn("backend:file_copy", async (meta) => {
@@ -71,8 +77,6 @@ window.onload = async () => {
     }
   });
 
-  // Start polling status
-  startPolling();
 };
 
 function formatSize(bytes) {
@@ -81,27 +85,6 @@ function formatSize(bytes) {
   const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-}
-
-function startPolling() {
-  if (pollingInterval) clearInterval(pollingInterval);
-  pollingInterval = setInterval(async () => {
-    try {
-      const status = await window.go.main.App.GetStatus();
-      if (status) {
-        updateStatusUI(status);
-        
-        // Active check for SSE status to cover missed events
-        const sseConnected = await window.go.main.App.IsSSEConnected();
-        updateBackendStatus(sseConnected);
-      }
-    } catch (e) {
-      console.error("Polling status failed:", e);
-      // updateBackendStatus(false); // Handled by SSE event now
-      // document.getElementById("appStatus").classList.remove("running");
-      // document.getElementById("appStatus").querySelector(".text").innerText = "连接服务失败";
-    }
-  }, 1000); // Poll every 1 second
 }
 
 let isBackendConnected = false;
@@ -314,7 +297,7 @@ async function toggleServer() {
       btn.disabled = false;
       updateServerBtn(isServerRunning);
     }
-    // Button stays in loading state until polling detects running=true
+    // Button stays in loading state until status event detects running=true
   }
 }
 
@@ -355,7 +338,7 @@ async function toggleClient() {
       btn.disabled = false;
       updateClientBtn(false);
     }
-    // Button stays in loading state until polling detects connected=true
+    // Button stays in loading state until status event detects connected=true
   }
 }
 
