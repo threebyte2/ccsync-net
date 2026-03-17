@@ -10,6 +10,8 @@ export function GetStatus():Promise<shared.StatusResponse>;
 
 export function IsSSEConnected():Promise<boolean>;
 
+export function OpenFileDialog():Promise<Array<string>>;
+
 export function SaveConfig(arg1:shared.ConfigRequest):Promise<void>;
 
 export function SaveFileDialog(arg1:string):Promise<string>;

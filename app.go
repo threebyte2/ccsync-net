@@ -308,6 +308,13 @@ func (a *App) SaveFileDialog(defaultName string) (string, error) {
 	})
 }
 
+// OpenFileDialog 弹出系统打开文件对话框
+func (a *App) OpenFileDialog() ([]string, error) {
+	return wailsRun.OpenMultipleFilesDialog(a.ctx, wailsRun.OpenDialogOptions{
+		Title: "选择要发送的文件",
+	})
+}
+
 // AcceptFile 接受文件并指定保存路径
 func (a *App) AcceptFile(fileID string, savePath string) error {
 	req := shared.AcceptFileRequest{

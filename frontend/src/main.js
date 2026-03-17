@@ -9,6 +9,7 @@ window.onload = async () => {
   window.toggleClient = toggleClient;
   window.saveConfig = saveConfig;
   window.clearLogs = clearLogs;
+  window.openFileDialog = openFileDialog;
 
   // Load initial config
   try {
@@ -482,6 +483,21 @@ function log(msg) {
 
 function clearLogs() {
   document.getElementById("logs").innerHTML = "";
+}
+
+async function openFileDialog() {
+  try {
+    const paths = await window.go.main.App.OpenFileDialog();
+    if (!paths || paths.length === 0) return;
+    
+    log(`⏳ 准备发送 ${paths.length} 个选择的文件...`);
+    await window.go.main.App.SendFiles(paths);
+    log(`✅ 发送信号已发出，等待对方拉取...`);
+    showToast(`已请求发送 ${paths.length} 个文件`, "success");
+  } catch (e) {
+    log(`❌ 选择文件失败: ${e}`);
+    showToast(`发送失败`, "error");
+  }
 }
 
 function preview(str) {

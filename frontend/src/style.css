@@ -260,6 +260,11 @@ input:focus {
   border-bottom: 1px solid var(--border-color);
 }
 
+.log-actions {
+  display: flex;
+  gap: 12px;
+}
+
 .btn-text {
   background: none;
   border: none;
