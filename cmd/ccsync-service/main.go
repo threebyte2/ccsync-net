@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -12,6 +13,7 @@ import (
 
 	"ccsync-net/internal/clipboard"
 	"ccsync-net/internal/config"
+	"ccsync-net/internal/dialog"
 	"ccsync-net/internal/shared"
 	"ccsync-net/internal/sync"
 
@@ -363,12 +365,7 @@ func initMonitor() {
 		if cfg.SyncMode == "send_only" {
 			return
 		}
-		// Push SSE to Wails
-		data, _ := json.Marshal(map[string]interface{}{
-			"type": "file_copy",
-			"meta": meta,
-		})
-		broadcastMSE(string(data))
+		handleFileCopyEvent(meta, true)
 	}
 
 	client.OnClipboardReceived = func(content string) {
@@ -387,12 +384,7 @@ func initMonitor() {
 		if cfg.SyncMode == "send_only" {
 			return
 		}
-		// Push SSE to Wails
-		data, _ := json.Marshal(map[string]interface{}{
-			"type": "file_copy",
-			"meta": meta,
-		})
-		broadcastMSE(string(data))
+		handleFileCopyEvent(meta, false)
 	}
 
 	server.OnClientConnected = func(count int) {
@@ -576,4 +568,64 @@ func handleSendFiles(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusOK)
+}
+
+// handleFileCopyEvent 处理收到的文件复制事件
+// 有 SSE 前端连接时推送给前端，无前端时直接弹出系统对话框
+func handleFileCopyEvent(meta *sync.FileMeta, isServer bool) {
+	sseClientsMu.Lock()
+	hasClients := len(sseClients) > 0
+	sseClientsMu.Unlock()
+
+	if hasClients {
+		// 有前端连接，走原有 SSE 流程
+		data, _ := json.Marshal(map[string]interface{}{
+			"type": "file_copy",
+			"meta": meta,
+		})
+		broadcastMSE(string(data))
+	} else {
+		// 无前端，直接弹原生对话框
+		go handleFileWithoutUI(meta, isServer)
+	}
+}
+
+// handleFileWithoutUI 在无前端界面时通过系统原生对话框处理文件接收
+func handleFileWithoutUI(meta *sync.FileMeta, isServer bool) {
+	log.Printf("[NoUI] 收到文件: %s (%d bytes)，弹出系统对话框...", meta.Name, meta.Size)
+
+	savePath, err := dialog.SaveFileDialog(meta.Name)
+	if err != nil {
+		log.Printf("[NoUI] 对话框出错: %v", err)
+		return
+	}
+	if savePath == "" {
+		log.Printf("[NoUI] 用户取消了保存: %s", meta.Name)
+		return
+	}
+
+	log.Printf("[NoUI] 用户选择保存到: %s", savePath)
+
+	// 获取对应的 transfer manager
+	var transfer *sync.FileTransferManager
+	if isServer {
+		transfer = server.GetTransferManager()
+	} else {
+		transfer = client.GetTransferManager()
+	}
+
+	// 准备接收文件
+	if err := transfer.PrepareIncomingFile(meta.ID, savePath); err != nil {
+		log.Printf("[NoUI] 准备接收文件失败: %v", err)
+		return
+	}
+
+	// 发送文件请求
+	if isServer {
+		server.BroadcastFileRequest(meta.ID, "server")
+	} else {
+		client.SendFileRequest(meta.ID, "client")
+	}
+
+	log.Printf("[NoUI] 已开始接收文件: %s -> %s", meta.Name, savePath)
 }
